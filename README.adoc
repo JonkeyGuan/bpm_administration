@@ -1,13 +1,17 @@
 :01_bpms_database: link:01_bpms_database/README.adoc[BPMS Database README]
+:visible_ops: link:http://www.amazon.com/Visible-Ops-Handbook-Implementing-Practical/dp/0975568612[Visible Ops]
 
 = bpm_administration
 
 Provides documents that discuss administration related concerns such as database configuration, security configuration, etc
 
+:numbered:
+
 == BPM Suite Database
 
-.Goals:
+.Goals.
 . Configure the Red Hat JBoss BPM Suite product to use the MariaDB relational database on Red Hat Enterprise Linux 7
+. In the spirit of {visible_ops}, understand how these configuration changes can be included in an automated provisioning script.
 
 Details: {01_bpms_database}
 
