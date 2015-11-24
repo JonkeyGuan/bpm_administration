@@ -1,0 +1,408 @@
+:data-uri:
+:toc: manual
+:toc-placement: preamble
+:mariadb: link:https://mariadb.org/[MariaDB]
+:bpm_docs: link:https://access.redhat.com/documentation/en/red-hat-jboss-bpm-suite/[BPM Suite documentation]
+:hibernate: link:http://hibernate.org/orm/[Hibernate]
+:support_portal: link:https://access.redhat.com[Red Hat Support Portal]
+:visible_ops: link:http://www.amazon.com/Visible-Ops-Handbook-Implementing-Practical/dp/0975568612[Visible Ops]
+:labs: link:http://people.redhat.com/althomas/eap6/eap6CourseMaterial.html[Course Materials]
+
+= BPM Suite 6 Database Configuration
+
+.goals.
+. Configure the Red Hat JBoss BPM Suite product to use the {mariadb} relational database on Red Hat Enterprise Linux 7.
+. In the spirit of {visible_ops}, understand how these configuration changes can be included in an automated provisioning script.
+
+:numbered:
+
+== Overview
+BPM Suite 6 is configured to use an H2 database out-of-the-box.
+While this is perfect for experimenting and product demos, it is not a production database.
+
+This document details the steps required to swap out use of this `H2` database and instead make use of an external {mariadb} server on Red Hat Enterprise Linux (RHEL) 7.
+
+This document is not a relational database installation and administration guide.
+
+Conceptually, the steps detailed in this guide could be applied if needing to integrate the `BPM Suite` product with other relational databases.
+
+=== Hibernate
+The various components of the `BPM Suite` product make use of {hibernate} for object-relational mapping and persistence to a relational database.
+
+One of the benefits of using Hibernate is that swapping out use of one supported relational database (ie: H2) for another relational database is often a fairly straight-forward configuration change.
+This is in fact the case when swapping out the database used by the `BPM Suite` product.
+
+=== Automated Provisioning
+All of the steps documented in this guide can be automated as part of one or more provisioning scripts.
+
+As you are working through this manual approach to configuring the `BPM Suite` product to use a relational database, think about how these steps could be automated as part of your automated scripts that provision your `dev`, `test` and `production` environments.
+
+== Assumptions
+
+. *RHEL 7*
++
+This document assumes the following about the operating system:
+
+.. You have entitlements to the Red Hat Enterprise Linux (RHEL) 7 operating system.
++
+In particular, the base `rhel-7-server-rpms` channel.
+.. The RHEL 7 operating system has internet access to either the `Red Hat Network` or a local `Red Hat Satellite Server`.
+.. At least a `minimal-server` configuration of RHEL 7 has been installed.
+.. You have `root` access to the operating system.
+.. The operating system is configured with a non-root user called: `jboss`. ie:
++
+----
+useradd -u 1000 -g 100 -d /home/jboss jboss
+----
++
+The `BPM Suite` java runtime process is owned by this non-root `jboss` user.
+.. The operating system is configured with a static ip address.
+.. The `$HOSTNAME` environment variable resolves to the static ip address of the operating system (either via DNS or a mapping in: `/etc/hosts`).
+. *JBoss EAP*
++
+This document assumes the use of JBoss EAP as the application platform that the `BPM Suite` product is installed on.
++
+NOTE: This document assumes a deployment topology where the `BPM Suite / EAP` products are co-located on the same operating system as the `mariadb-server`.
+In a production environment, this deployment topology is often not ideal as it tends not to allow for horizontal scalability and clustering.
++
+This document also assumes the use of JBoss EAP `standalone` administration.
+Much of the content in this document could be applied to a deployment topology configured using JBoss EAP `domain mode` administration.
+. *JBoss BPM Suite*
++
+This document assumes use of version 6.2.0.Final of the `Red Hat JBoss BPM Suite` product.
+In particular, it assumes you have an active subscription to the product.
+It also assumes that you have downloaded the product zip file from the {support_portal} and installed it on your `RHEL 7` operating system.
++
+NOTE: For the purposes of this document, the directory where you installed the BPM Suite product on the `RHEL 7` operating system is referred to as `$JBOSS_HOME`.
+The use of this reference does not necessarily assume you've actually defined the `$JBOSS_HOME` environment variable in your operating system user's shell.
+
+. *BPM Administration and Configuration Guide*
++
+It is assumed you have read the {bpm_docs} and in particular the `Data management` section from the `Administration and Configuration Guide`.
+
+== MariaDB
+
+=== Install and start
+
+. As the `root` operating system user, execute the following in a terminal window to install the MariaDB RDBMS as well as the JBDC libraries:
++
+-----
+yum install -y mariadb-server mysql-connector-java
+-----
+. Enable the `mariadb` operating system service
++
+-----
+systemctl enable mariadb.service
+-----
+. Start the `mariadb` operating system service
++
+-----
+systemctl start mariadb.service
+-----
++
+. (Optional) Expose default TCP listener port of `mariadb-server`
++
+-----
+firewall-cmd --zone=public --add-port=3306/tcp
+-----
+
+=== User Administration
+
+==== `root`
+. Set mariadb `root` user password to `jb0ssredhat!`:
++
+-----
+mysqladmin -u root password jb0ssredhat!
+-----
++
+NOTE:  Feel free to pick any password you prefer for the `root` mariadb user.
+
+. Log into the `mariadb-server` as the database `root` user:
++
+-----
+$ mysql -u root -p mysql
+-----
+
+==== `jbpm`
+. Create `jbpm` user (with password of `jbpm`) in `mariadb-server:
++
+-----
+GRANT ALL ON *.* TO 'jbpm'@'localhost' IDENTIFIED BY 'jbpm';
+GRANT ALL ON *.* TO 'jbpm'@'%' IDENTIFIED BY 'jbpm';
+-----
+
+. Create `jbpm` database in `mariadb-server`
++
+-----
+CREATE DATABASE IF NOT EXISTS jbpm;
+-----
+
+==== `dashbuilder`
+. Create `dashbuilder` user (with password of: `dashbuilder`) in mariadb-server:
++
+-----
+GRANT ALL ON *.* TO 'dashbuilder'@'localhost' IDENTIFIED BY 'dashbuilder';
+GRANT ALL ON *.* TO 'dashbuilder'@'%' IDENTIFIED BY 'dashbuilder';
+-----
+
+==== Verify user permissions
+. View new security permission mappings between `jbpm` database user and host:
++
+-----
+> select user, host from user where user='jbpm' or user='dashbuilder';
++-------------+-----------+
+| user        | host      |
++-------------+-----------+
+| dashbuilder | %         |
+| jbpm        | %         |
+| dashbuilder | localhost |
+| jbpm        | localhost |
++-------------+-----------+
+-----
+
+== Database and Tables
+
+=== Overview
+While it is possible to have Hibernate generate tables in the database, this is often not an option in a production environment.
+Instead, the preferred approach is to seed a relational database using SQL DDL scripts.
+
+The Red Hat BPM Suite product includes SQL DDL scripts in the *Supplementary Tools* download.
+
+=== Create Databases
+
+. If not already logged into the `mariadb-server` as the `root` user, do so now.
+. Create databases:
++
+-----
+CREATE DATABASE IF NOT EXISTS jbpm;
+CREATE DATABASE IF NOT EXISTS dashbuilder;
+-----
+
+=== Create Tables
+. Download the `Supplementary Tools` for `BPM Suite` zip file from the {support_portal}
+. Unzip and change directories into the new unzipped folder (ie: `jboss-brms-bpmsuite-*-supplementary-tools`).
+. As the `jboss` operating system user, execute the following:
++
+-----
+mysql -u jbpm -p jbpm < ddl-scripts/mysql5/mysql5-jbpm-schema.sql
+mysql -u jbpm -p jbpm < ddl-scripts/mysql5/quartz_tables_mysql.sql
+-----
+. List and count number of new tables in the `jbpm` database:
++
+-----
+mysql -u jbpm -p jbpm -e 'show tables; select found_rows()'
+-----
++
+NOTE: As of `BPM Suite 6.2`, the number of database tables in the `jbpm` database should be: 51.
+
+. Create the `dashbuilder` tables:
++
+-----
+mysql -u dashbuilder -p dashbuilder < ddl-scripts/mysql5/mysql5-dashbuilder-schema.sql
+-----
+. List and count number of new tables in the `dashbuilder` database:
++
+-----
+mysql -u dashbuilder -p dashbuilder -e 'show tables; select found_rows()'
+-----
++
+NOTE: As of `BPM Suite 6.2`, the numer of database tables in the `dashbuidler` database should be: 23.
+
+== Create `com.mysql` module
+In this section of the lab, a JBoss EAP module will be defined for the `mysql` JBDS library.
+
+. As the `jboss` operating system user, open a terminal window.
+. Add a new module directory to the JBoss EAP filesystem.
+This new directory will be where the `mysql` module will reside.
++
+----------
+mkdir -p $JBOSS_HOME/modules/system/layers/base/com/mysql/main
+----------
+. Create a soft link to the `mysql` JBDC driver:
++
+-----
+ln -s /usr/share/java/mysql-connector-java.jar modules/system/layers/base/com/mysql/main/
+-----
+. Create a `module.xml` file in the `$JBOSS_HOME/modules/system/layers/base/com/mysql/main` directory.
++
+The contents of the `module.xml` file should be as follows:
++
+----------
+<?xml version="1.0" encoding="UTF-8"?>
+<module xmlns="urn:jboss:module:1.1" name="com.mysql">
+    <resources>
+      <resource-root path="mysql-connector-java.jar"/>
+    </resources>
+    <dependencies>
+        <module name="javax.api"/>
+        <module name="javax.transaction.api"/>
+        <module name="javax.servlet.api" optional="true"/>
+    </dependencies>
+</module>
+----------
+
+== Configure Datasources in JBoss EAP
+
+=== Overview
+The default datasource used by BPM Suite has the JNDI name of: *java:jboss/datasources/ExampleDS*.
+This single datasource is leveraged by both the bpm runtime (ie: process / human task wait state and audit log) as well as `dashbuilder`.
+
+In the following, the following two new datasources will be created:
+
+. *jbpmDS*
++
+For use by the `bpm runtime` for persistence of process/human task wait states and as well as BPM audit log.
+. *dashbuilderDS*
++
+For use by `dashbuilder` to persist `workspace` and `dashboard KPI` configurations.
+
+=== Create Datasources
+
+. Open a terminal window as the `jboss` operating system user and change directories to: `$JBOSS_HOME`.
+. If its not already running, start your `BPM Suite` runtime in `admin-only` mode:
++
+-----
+./bin/standalone.sh --admin-only
+-----
+. In another terminal window (again as the `jboss` operating system user), create a new JBoss command line interface (CLI) file in `/tmp`: `/tmp/bpm_datasources.cli`.
++
+Populate this `CLI` file as follows:
++
+-----
+batch
+    /subsystem=datasources/jdbc-driver=mysql:add(driver-xa-datasource-class-name=com.mysql.jdbc.jbdc2.optional.MysqlXAConnection,driver-name=mysql,driver-module-name=com.mysql)
+
+    # Assumes that mariadb-server is listening on: ${jboss.host.name}:3306
+
+    # jbpmDS
+    data-source add --name=jbpmDS --jndi-name="java:jboss/datasources/jbpmDS" --driver-name=mysql --user-name=jbpm --password=jbpm --exception-sorter-class-name=org.jboss.jca.adapters.jdbc.extensions.mysql.MySQLExceptionSorter --valid-connection-checker-class-name=org.jboss.jca.adapters.jdbc.extensions.mysql.MySQLValidConnectionChecker --connection-url="jdbc:mysql://${jboss.host.name}:3306/jbpm?transformedBitIsBoolean=true&sessionVariables=storage_engine=InnoDB"
+    /subsystem=datasources/data-source=jbpmDS:enable
+
+    # dashbuilderDS
+    data-source add --name=dashbuilderDS --jndi-name="java:jboss/datasources/dashbuilderDS" --driver-name=mysql --user-name=dashbuilder --password=dashbuilder --exception-sorter-class-name=org.jboss.jca.adapters.jdbc.extensions.mysql.MySQLExceptionSorter --valid-connection-checker-class-name=org.jboss.jca.adapters.jdbc.extensions.mysql.MySQLValidConnectionChecker --connection-url="jdbc:mysql://${jboss.host.name}:3306/dashbuilder?transformedBitIsBoolean=true&sessionVariables=storage_engine=InnoDB"
+    /subsystem=datasources/data-source=dashbuilderDS:enable
+run-batch
+-----
+. Execute the following from `$JBOSS_HOME`:
++
+-----
+./bin/jboss-cli.sh -c --file=/tmp/bpm_datasources.cli
+-----
+
+
+== Configure BPM Suite to use new datasources
+In the previous step, a new datasources were added to JBoss EAP.
+Before starting the server, use the following steps to configure BPM Suite 6 to use the new datasource.
+
+=== `business-central` web artifact
+. Manually edit the following file:
++
+-----
+$JBOSS_HOME/standalone/deployments/business-central.war/WEB-INF/classes/META-INF/persistence.xml
+-----
+.. Three items will require a change:
+* The hibernate dialect
+* The JNDI name to the datasource
+* The hibernate hbm2ddl.auto value
+.. Modify the file as follows:
++
+[source,xml]
+----------
+<jta-data-source>java:jboss/datasources/jbpmDS</jta-data-source> <1>
+.
+.
+<property name="hibernate.dialect"
+         value="org.hibernate.dialect.MySQLDialect"/> <2>
+.
+.
+<property name="hibernate.hbm2ddl.auto" value="none" /> <3>
+----------
+* (1) Set the *jta-data-source* value to the JNDI name provided for the datasource added to JBoss EAP.
+* (2) Set the *hibernate.dialect* property to a value specific for `MySQL`.
+* (3) Change the value of the *hibernate.hbm2ddl.auto* property to *none*
+. Manually edit the following file:
++
+-----
+$JBOSS_HOME/standalone/deployments/business-central.war/WEB-INF/jboss-deployment-structure.xml
+-----
++
+[source,xml]
+----------
+<dependencies>
+    <module name="com.mysql"/>
+    ...
+----------
+
+=== `dashbuilder` web artifact
+. Manually edit the following file:
++
+-----
+$JBOSS_HOME/standalone/deployments/dashbuilder.war/WEB-INF/jboss-web.xml.
+-----
++
+In particular, change the *jndi-name* value to the JNDI name for the new datasource:
++
+[source,xml]
+----------
+    <resource-ref>
+        <res-ref-name>jdbc/dashbuilder</res-ref-name>
+        <res-type>javax.sql.DataSource</res-type>
+        <jndi-name>java:jboss/datasources/dashbuilderDS</jndi-name>
+    </resource-ref>
+----------
+
+.  Add a dependency to the following `dashbuilder` file:
++
+-----
+$JBOSS_HOME/standalone/deployments/dashbuilder.war/WEB-INF/jboss-deployment-structure.xml
+-----
++
+[source,xml]
+----------
+<dependencies>
+    <module name="com.mysql"/>
+    ...
+----------
+. Edit the following `dashbuilder` file that defines various out-of-the-box BPM related `KPIs`:
++
+-----
+sed -i 's/local/java:jboss\/datasources\/jbpmDS/' standalone/deployments/dashbuilder.war/WEB-INF/deployments/jbpmKPIs_v2.kpis
+-----
+
+. Re-start
++
+After performing the above steps the BPM Suite 6 application is configured to use the new `jbpmDS` and `dashbuilder` databases.
++
+Restart the BPM Suite server.
++
+Tail the $JBOSS_HOME/standalone/server.log` to identify if any database related errors appear.
+
+=== Test
+Once the `BPM Suite` server has re-started, test its new configurations by working through the lifecycle of a simple `helloworld` BPMN2 business process.
+
+Verify that `audit log` entries have been persisted in the database by executing the following:
+
+-----
+mysql -u jbpm -p jbpm -e 'select count(id) from ProcessInstanceLog;'
+-----
+
+Congratulations! You have successfully configured the Red Hat BPM Suite product to use a `mariadb-server` server for persistence.
+
+== Additional considerations
+
+=== Database Foreign Keys
+Some databases, such as, Oracle and Postgres, do not automatically create an index for each foreign key. This can result in significant
+performance degradation. To avoid this situation it is necessary to create indexes on some of the columns that are referenced in foreign key constraints.
+
+Indexes should be created on the following columns to avoid possible deadlocks and improve query performance:
+
+.Human-Task schema:
+* Task.processinstanceid
+* task.processid
+* task.status
+* task.archived
+* task.workitem
+* i18ntext.language
+
+.Core engine schema:
+* eventtypes.instanceid
