@@ -1,0 +1,15 @@
+:01_bpms_database: link:01_bpms_database/README.adoc[BPMS Database README]
+
+= bpm_administration
+
+Provides documents that discuss administration related concerns such as database configuration, security configuration, etc
+
+== BPM Suite Database
+
+.Goals:
+. Configure the Red Hat JBoss BPM Suite product to use the MariaDB relational database on Red Hat Enterprise Linux 7
+
+Details: {01_bpms_database}
+
+
+
